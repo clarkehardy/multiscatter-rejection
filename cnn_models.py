@@ -35,8 +35,7 @@ def ResNet14(input_shape=(32, 32, 3), num_classes=10):
     """
     inputs = layers.Input(shape=input_shape)
 
-    # CIFAR stem: 3x3 conv, 16 filters (no BN before first conv per original paper)
-    x = layers.Conv2D(16, 3, padding="same", use_bias=False,
+    x = layers.Conv2D(8, 3, padding="same", use_bias=False,
                       kernel_initializer="he_normal")(inputs)
     x = layers.BatchNormalization()(x)
     x = layers.ReLU()(x)
@@ -60,10 +59,10 @@ def ResNet14(input_shape=(32, 32, 3), num_classes=10):
     x = layers.GlobalAveragePooling2D()(x)
     outputs = layers.Dense(num_classes, activation=None)(x)  # logits
 
-    model = models.Model(inputs, outputs, name="ResNet20")
+    model = models.Model(inputs, outputs, name="ResNet14")
 
     model.compile(optimizer=tf.keras.optimizers.Adam(1e-3),
-                loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
-                metrics=[tf.keras.metrics.BinaryAccuracy(name="acc"),
-                         tf.keras.metrics.AUC(name="AUC")])
+                  loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
+                  metrics=[tf.keras.metrics.BinaryAccuracy(name="acc"),
+                           tf.keras.metrics.AUC(name="AUC")])
     return model
