@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.patches import Circle
 import scipy.integrate as si
+from joblib import Parallel, delayed
 
 def get_pmt_positions(x, y, rows=100, n_per_row=100, diam=15., max_rad=100.):
     """Get the coordinates of all PMTs in an array
@@ -328,7 +329,7 @@ def group_indices_by_row_in_rect(xy, diam, width, height,
 
     return rows
 
-def images_from_events(counts, pmt_pos_array, pmt_diam, width, height):
+def images_from_events(counts, pmt_pos_array, pmt_diam, width, height, num_images=10000000):
     angles = np.arange(0, 360, 60)
 
     images = []
@@ -388,4 +389,121 @@ def images_from_events(counts, pmt_pos_array, pmt_diam, width, height):
         np.array(shapes)[:, 0]
         np.array([])
 
+        if len(images) >= num_images:
+            break
+
     return np.array(images), np.array(pmt_indices)
+
+def _process_single_event(event_data):
+    """Process a single event for parallel execution.
+    
+    :param event_data: Tuple containing (event_id, counts_single_event, pmt_pos_array, pmt_diam, width, height)
+    :type event_data: tuple
+    :return: Tuple containing (event_id, image, pmt_indices) or None if event should be skipped
+    :rtype: tuple or None
+    """
+    event_id, counts_single_event, pmt_pos_array, pmt_diam, width, height = event_data
+    
+    if np.sum(counts_single_event) == 0:
+        return None
+
+    center = np.sum(pmt_pos_array*counts_single_event[:, None], axis=0)/np.sum(counts_single_event)
+    angles = np.arange(0, 360, 60)
+
+    orders, masks = hex_oriented_indices_in_rect(pmt_pos_array, diam=pmt_diam, width=width, \
+                                                 height=height, center=center)
+    
+    counts_images = []
+    angle_indices = []
+    angle_row_indices = []
+
+    for angle in angles:
+        idx = orders[angle]
+
+        i_row, j_col = hex_rowcol_indices(xy=pmt_pos_array, diam=pmt_diam, center=center, angle_deg=angle)
+        rows = group_indices_by_row_in_rect(pmt_pos_array, diam=pmt_diam, width=width, \
+                                            height=height, center=center, angle_deg=angle)
+
+        image_rows = len(rows)
+        image_cols = min([len(rows[k]) for k in rows.keys()])
+        counts_image = np.zeros((image_rows, image_cols))
+        for r, k in enumerate(rows.keys()):
+            for c in range(counts_image.shape[1]):
+                if len(rows[k]) > image_cols:
+                    counts_image[r, c] = np.mean(counts_single_event[rows[k]][c:c+1])
+                else:
+                    counts_image[r, c] = counts_single_event[rows[k]][c]
+
+        counts_images.append(counts_image/np.sum(counts_image))
+        angle_indices.append(idx)
+        angle_row_indices.append(i_row)
+
+    try:
+        counts_images = np.array(counts_images)
+        angle_indices = np.array(angle_indices)
+        angle_row_indices = np.array(angle_row_indices)
+    except ValueError:
+        return None
+
+    x_image_vals = np.arange(counts_images.shape[1], dtype=float) - (counts_images.shape[1] - 1)/2.
+    counts_images_shifted = counts_images - np.mean(counts_images, axis=(1,2), keepdims=True)
+    first_moments = np.sum(counts_images_shifted*x_image_vals[None, :, None], axis=(1,2))
+    best_angle_ind = np.argmax(first_moments)
+
+    return (event_id, counts_images[best_angle_ind], angle_indices[best_angle_ind])
+
+def images_from_events_parallel(counts, pmt_pos_array, pmt_diam, width, height, num_images=10000000, \
+                                n_jobs=None, extra_fac=1.5):
+    """Parallelized version of images_from_events using joblib.
+    
+    :param counts: Event count data
+    :type counts: np.ndarray
+    :param pmt_pos_array: PMT position array
+    :type pmt_pos_array: np.ndarray
+    :param pmt_diam: PMT diameter
+    :type pmt_diam: float
+    :param width: Image width
+    :type width: float
+    :param height: Image height
+    :type height: float
+    :param num_images: Maximum number of images to process, defaults to 10000000
+    :type num_images: int, optional
+    :param n_jobs: Number of jobs to run in parallel, defaults to -1 (all CPUs)
+    :type n_jobs: int, optional
+    :return: Tuple containing (images, pmt_indices)
+    :rtype: tuple
+    """
+    if n_jobs is None:
+        n_jobs = -1  # Use all available CPUs
+    
+    # Filter out events with zero counts first
+    valid_events = []
+    for i in range(len(counts)):
+        if np.sum(counts[i]) > 0:
+            valid_events.append(i)
+    
+    # Limit to num_images if we have enough valid events
+    if len(valid_events) > num_images:
+        valid_events = valid_events[:int(num_images*extra_fac)]
+    
+    # Prepare data for parallel processing - only send what each worker needs
+    event_data = [(i, counts[i], pmt_pos_array, pmt_diam, width, height) for i in valid_events]
+    
+    # Process all events in parallel at once (no batching)
+    results = Parallel(n_jobs=n_jobs, backend='multiprocessing')(
+        delayed(_process_single_event)(data) for data in event_data
+    )
+    
+    # Collect valid results
+    images = []
+    pmt_indices = []
+    event_ids = []
+    
+    for result in results:
+        if result is not None:
+            event_id, image, pmt_idx = result
+            images.append(image)
+            pmt_indices.append(pmt_idx)
+            event_ids.append(event_id)
+    
+    return np.array(images)[:num_images], np.array(pmt_indices)[:num_images], np.array(event_ids)[:num_images]
