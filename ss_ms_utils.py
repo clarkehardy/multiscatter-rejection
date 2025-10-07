@@ -378,9 +378,9 @@ def images_from_events(counts, pmt_pos_array, pmt_diam, width, height, num_image
             continue
 
         x_image_vals = np.arange(counts_images.shape[1], dtype=float) - (counts_images.shape[1] - 1)/2.
-        counts_images_shifted = counts_images - np.mean(counts_images, axis=(1,2), keepdims=True)
-        first_moments = np.sum(counts_images_shifted*x_image_vals[None, :, None], axis=(1,2))
-        best_angle_ind = np.argmax(first_moments)
+        # counts_images_shifted = counts_images #- np.mean(counts_images, axis=(1,2), keepdims=True)
+        second_moments = np.sum(counts_images*x_image_vals[None, :, None]**2, axis=(1,2))
+        best_angle_ind = np.argmax(second_moments)
 
         images.append(counts_images[best_angle_ind])
         pmt_indices.append(angle_indices[best_angle_ind])
@@ -446,9 +446,9 @@ def _process_single_event(event_data):
         return None
 
     x_image_vals = np.arange(counts_images.shape[1], dtype=float) - (counts_images.shape[1] - 1)/2.
-    counts_images_shifted = counts_images - np.mean(counts_images, axis=(1,2), keepdims=True)
-    first_moments = np.sum(counts_images_shifted*x_image_vals[None, :, None], axis=(1,2))
-    best_angle_ind = np.argmax(first_moments)
+    # counts_images_shifted = counts_images - np.mean(counts_images, axis=(1,2), keepdims=True)
+    second_moments = np.sum(counts_images*x_image_vals[None, :, None]**2, axis=(1,2))
+    best_angle_ind = np.argmax(second_moments)
 
     return (event_id, counts_images[best_angle_ind], angle_indices[best_angle_ind])
 
